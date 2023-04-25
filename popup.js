@@ -5,9 +5,8 @@ let remaining = 0;
 let totalPages = 0;
 let currentURL = "";
 
-let settings = {}
-
 const createLink = async (destination, slug) => {        
+    let settings = await getSettings();
     if (!settings.domain || settings.domain == "") {
         alert("Domain has not been set.")
     }
@@ -79,7 +78,6 @@ const loadPage = (newPage) => {
             itemsOnPage = 0;
             remaining = 0;
             totalPages = 0;
-            setError(false)
             setLoading(true);
             loadLinks();
             
@@ -87,6 +85,7 @@ const loadPage = (newPage) => {
 }
 
 const setLoading = (loading) => {
+    setError(false);
     document.querySelector(".links-table").style.display = loading ? "none" : "block";
     document.querySelector(".pagination").style.display = loading ? "none" : "flex";
 
@@ -104,12 +103,16 @@ const setError = (error, text) => {
     }
 }
 
-const saveValues = () => {
-    chrome.storage.local.set(settings);
+const saveValues = (settings) => {
+    chrome.storage.sync.set(settings);
 }
 
-const getValues = async () => {
-    settings = await chrome.storage.local.get(["domain", "secret"]);
+const getSettings = () => {
+    return chrome.storage.sync.get(["domain","secret"]);
+}
+
+const loadValues = async () => {
+    let settings = await getSettings();
     const settingsPage = document.getElementById("settings-page");
 
     [...settingsPage.querySelectorAll("input")].forEach((setting) => {
@@ -141,8 +144,17 @@ const formatDate = (date) => {
     return `${month} ${day}, ${year}`;
 }
 
-const deleteLink = async (link, linkElement) => {
-    const confirmDelete = confirm(`Are you sure you want to delete ${link.slug}?`);
+const deleteLink = async (e) => {
+    if (e.target.getAttribute("disabled")) return;
+    let linkId = e.target.dataset["link-id"];
+    let linkSlug = e.target.dataset["link-slug"];
+
+    console.log(e)
+
+    console.log(e.target.dataset)
+
+    let settings = await getSettings();
+    const confirmDelete = confirm(`Are you sure you want to delete ${linkSlug}?`);
     if (confirmDelete) {
         const response = await fetch(`${settings.domain}/api/link`, {
             method: "DELETE",
@@ -151,18 +163,20 @@ const deleteLink = async (link, linkElement) => {
                 "Authorization": settings.secret
             },
             body: JSON.stringify({
-                ids: [link.id]
+                ids: [linkId]
             })
         });
 
         const data = await response.json();
 
         if (data.success) {
+            let linkElement = document.querySelector(`.link[data-link-id="${linkId}"]`);
             linkElement.classList.add("link-deleted");
             Array.from(linkElement.querySelectorAll(".link-action")).forEach((button) => {
                 button.setAttribute("disabled", true);
             })
-            document.getElementById("link-action-anchor").removeAttribute("href");
+            linkElement.querySelector("#link-action-anchor").removeAttribute("href");
+            linkElement.querySelector("#action-delete").removeEventListener("click", deleteLink);
         } else {
             alert(data.message);
         }
@@ -209,6 +223,7 @@ const loadLinks = async () => {
     const links = await response.json();
 
     if (!links.success) {
+        setLoading(false);
         setError(true, links.message);
         return;
     }
@@ -223,6 +238,7 @@ const loadLinks = async () => {
     links.result.links.forEach((link, index) => {
         const row = linkTable.insertRow(index + 1);
         row.classList.add("link");
+        row.setAttribute("data-link-id",link.id)
 
         const linkDate = row.insertCell(0);
         linkDate.classList.add("link-date");
@@ -280,10 +296,10 @@ const loadLinks = async () => {
             }
 
             if (action.id == "delete") {
-                actionElement.addEventListener("click", (e) => {
-                    if (e.target.getAttribute("disabled")) return;
-                    deleteLink(link, row);
-                });
+                actionElement.setAttribute("data-link-id", link.id);
+                actionElement.setAttribute("data-link-slug", link.slug);
+
+                actionElement.addEventListener("click", deleteLink);
             }
         });
     })
@@ -344,21 +360,21 @@ const init = async () => {
     // New link
 
     const newLinkButton = document.getElementById("new-link-button");
-    console.log(newLinkButton)
     newLinkButton.addEventListener("click", () => {
         let destination = document.getElementById("new-link-destination").value;
         let slug = document.getElementById("new-link-slug").value;
         createLink(destination, slug);
     })
-
-    await getValues();
+    
+    await loadValues();
     loadPage("links");
 }
 
 [...document.querySelectorAll("input")].forEach((input) => {
     input.addEventListener("change", () => {
+        let settings = {}
         settings[input.getAttribute("name")] = input.value;
-        saveValues();
+        saveValues(settings);
     })
 });
 
